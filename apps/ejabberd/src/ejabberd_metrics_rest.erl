@@ -5,7 +5,6 @@
 %%%===================================================================
 
 -module(ejabberd_metrics_rest).
--behaviour(cowboy_rest).
 
 -type command() :: available_metrics | sum_metrics |
     sum_metric | host_metrics | host_metric.
@@ -72,8 +71,8 @@ response(Req, #state{cmd=host_metrics}=State) ->
     {Host, NewReq} = cowboy_req:binding(host, Req),
     case get_host_metrics(Host) of
         [] ->
-            {ok, NewReq} = cowboy_req:reply(404, Req),
-            {halt, NewReq, State};
+            {ok, NewReq2} = cowboy_req:reply(404, NewReq),
+            {halt, NewReq2, State};
         Metrics ->
             Response = response_json([{metrics, Metrics}]),
             {Response, NewReq, State}

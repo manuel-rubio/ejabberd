@@ -51,8 +51,8 @@
          force_update_presence/1,
          user_resources/2,
          get_session_pid/3,
-         get_user_info/3,
-         get_user_ip/3
+         get_session/3,
+         get_session_ip/3
         ]).
 
 %% gen_server callbacks
@@ -97,13 +97,16 @@ open_session(SID, User, Server, Resource, Info) ->
                        [SID, JID, Info]).
 
 close_session(SID, User, Server, Resource) ->
-    Info = case ?SM_BACKEND:get_sessions(User, Server, Resource) of
+    LUser = jlib:nodeprep(User),
+    LServer = jlib:nameprep(Server),
+    LResource = jlib:resourceprep(Resource),
+    Info = case ?SM_BACKEND:get_sessions(LUser, LServer, LResource) of
                [Session] ->
                    Session#session.info;
                _ ->
                    []
            end,
-    ?SM_BACKEND:delete_session(SID, User, Server, Resource),
+    ?SM_BACKEND:delete_session(SID, LUser, LServer, LResource),
     JID = jlib:make_jid(User, Server, Resource),
     ejabberd_hooks:run(sm_remove_connection_hook, JID#jid.lserver,
                        [SID, JID, Info]).
@@ -127,8 +130,8 @@ bounce_offline_message(#jid{server = Server} = From, To, Packet) ->
 disconnect_removed_user(User, Server) ->
     ejabberd_sm:route(jlib:make_jid(<<>>, <<>>, <<>>),
                       jlib:make_jid(User, Server, <<>>),
-                      {xmlel,<<"broadcast">>, [],
-                       [{exit, <<"User removed">>}]}).
+                      #xmlel{name = <<"broadcast">>,
+                             children = [{exit, <<"User removed">>}]}).
 
 get_user_resources(User, Server) ->
     LUser = jlib:nodeprep(User),
@@ -136,7 +139,7 @@ get_user_resources(User, Server) ->
     Ss = ?SM_BACKEND:get_sessions(LUser, LServer),
     [element(3, S#session.usr) || S <- clean_session_list(Ss)].
 
-get_user_ip(User, Server, Resource) ->
+get_session_ip(User, Server, Resource) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
     LResource = jlib:resourceprep(Resource),
@@ -148,7 +151,7 @@ get_user_ip(User, Server, Resource) ->
             proplists:get_value(ip, Session#session.info)
     end.
 
-get_user_info(User, Server, Resource) ->
+get_session(User, Server, Resource) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
     LResource = jlib:resourceprep(Resource),
@@ -157,10 +160,10 @@ get_user_info(User, Server, Resource) ->
             offline;
         Ss ->
             Session = lists:max(Ss),
-            Node = node(element(2, Session#session.sid)),
-            Conn = proplists:get_value(conn, Session#session.info),
-            IP = proplists:get_value(ip, Session#session.info),
-            [{node, Node}, {conn, Conn}, {ip, IP}]
+            {Session#session.usr,
+             Session#session.sid,
+             Session#session.priority,
+             Session#session.info}
     end.
 
 set_presence(SID, User, Server, Resource, Priority, Presence, Info) ->
@@ -351,7 +354,7 @@ do_route(From, To, Packet) ->
     ?DEBUG("session manager~n\tfrom ~p~n\tto ~p~n\tpacket ~P~n",
            [From, To, Packet, 8]),
     #jid{ luser = LUser, lserver = LServer, lresource = LResource} = To,
-    {xmlel, Name, Attrs, _Els} = Packet,
+    #xmlel{name = Name, attrs = Attrs} = Packet,
     case LResource of
         <<>> ->
             do_route_no_resource(Name, xml:get_attr_s(<<"type">>, Attrs),

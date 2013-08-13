@@ -36,6 +36,7 @@
 	 on_presence_update/4,
 	 store_last_info/4,
 	 get_last_info/2,
+     select/3,
 	 remove_user/2]).
 
 -include("ejabberd.hrl").
@@ -79,10 +80,9 @@ process_local_iq(_From, _To, #iq{type = Type, sub_el = SubEl} = IQ) ->
 	get ->
 	    Sec = get_node_uptime(),
 	    IQ#iq{type = result,
-                  sub_el =  [{xmlel, <<"query">>,
-                              [{<<"xmlns">>, ?NS_LAST},
-                               {<<"seconds">>, list_to_binary(integer_to_list(Sec))}],
-			                  []}]}
+                  sub_el =  [#xmlel{name = <<"query">>,
+                                    attrs = [{<<"xmlns">>, ?NS_LAST},
+                                             {<<"seconds">>, list_to_binary(integer_to_list(Sec))}]}]}
     end.
 
 %% @spec () -> integer()
@@ -128,7 +128,7 @@ process_sm_iq(From, To, #iq{type = Type, sub_el = SubEl} = IQ) ->
 			   allow,
 			   [User, Server, UserListRecord,
 			    {To, From,
-                  {xmlel, <<"presence">>, [], []}},
+                  #xmlel{name = <<"presence">>}},
 			    out]) of
 			allow ->
 			    get_last_iq(IQ, SubEl, User, Server);
@@ -166,17 +166,16 @@ get_last_iq(IQ, SubEl, LUser, LServer) ->
 		    TimeStamp2 = now_to_seconds(now()),
 		    Sec = TimeStamp2 - TimeStamp,
 		    IQ#iq{type = result,
-            sub_el = [{xmlel, <<"query">>,
-                       [{<<"xmlns">>, ?NS_LAST},
-                        {<<"seconds">>, list_to_binary(integer_to_list(Sec))}],
-				     [{xmlcdata, Status}]}]}
+            sub_el = [#xmlel{name = <<"query">>,
+                             attrs = [{<<"xmlns">>, ?NS_LAST},
+                                      {<<"seconds">>, list_to_binary(integer_to_list(Sec))}],
+			     children = [#xmlcdata{content = Status}]}]}
 	    end;
 	_ ->
 	    IQ#iq{type = result,
-           sub_el = [{xmlel, <<"query">>,
-                      [{<<"xmlns">>, ?NS_LAST},
-                       {<<"seconds">>, "0"}],
-			     []}]}
+           sub_el = [#xmlel{name = <<"query">>,
+                            attrs = [{<<"xmlns">>, ?NS_LAST},
+                                     {<<"seconds">>, "0"}]}]}
     end.
 
 on_presence_update(User, Server, _Resource, Status) ->
@@ -194,8 +193,8 @@ store_last_info(User, Server, TimeStamp, Status) ->
 	end,
     mnesia:transaction(F).
 
-%% @spec (LUser::string(), LServer::string()) ->
-%%      {ok, TimeStamp::integer(), Status::string()} | not_found
+%% @spec (LUser::binary(), LServer::binary()) ->
+%%      {ok, TimeStamp::integer(), Status::binary()} | not_found
 get_last_info(LUser, LServer) ->
     case get_last(LUser, LServer) of
 	{error, _Reason} ->
@@ -203,6 +202,12 @@ get_last_info(LUser, LServer) ->
 	Res ->
 	    Res
     end.
+
+select(LServer, TStamp, Comparator) ->
+    mnesia:dirty_select(
+        last_activity, [{{last_activity, {'_', LServer}, '$1', '_'},
+                         [{Comparator, '$1', TStamp}],
+                         ['$1']}]).
 
 remove_user(User, Server) ->
     LUser = jlib:nodeprep(User),
