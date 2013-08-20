@@ -103,20 +103,20 @@ loop(Host, AccessMaxOfflineMsgs) ->
 					    (M#offline_msg.to)#jid.luser),
 				      From = M#offline_msg.from,
 				      To = M#offline_msg.to,
-				      {xmlelement, Name, Attrs, Els} =
+				      #xmlel{name=Name, attrs=Attrs, children=Els} =
 					  M#offline_msg.packet,
 				      Attrs2 = jlib:replace_from_to_attrs(
 						 jlib:jid_to_binary(From),
 						 jlib:jid_to_binary(To),
 						 Attrs),
-				      Packet = {xmlelement, Name, Attrs2,
-						Els ++
+				      Packet = #xmlel{name=Name, attrs=Attrs2,
+						children=Els ++
 						[jlib:timestamp_to_xml(
 						   calendar:now_to_universal_time(
 					     M#offline_msg.timestamp),
 					   utc,
 					   jlib:make_jid(<<>>, Host, <<>>),
-					   "Offline Storage"),
+					   <<"Offline Storage">>),
 					 %% TODO: Delete the next three lines once XEP-0091 is Obsolete
 					 jlib:timestamp_to_xml( 
 					   calendar:now_to_universal_time(
@@ -197,13 +197,13 @@ get_sm_features(Acc, _From, _To, _Node, _Lang) ->
 store_packet(From, To, Packet) ->
     Type = xml:get_tag_attr_s(<<"type">>, Packet),
     if
-	(Type /= "error") and (Type /= "groupchat") and
-	(Type /= "headline") ->
+	(Type /= <<"error">>) and (Type /= <<"groupchat">>) and
+	(Type /= <<"headline">>) ->
 	    case check_event_chatstates(From, To, Packet) of
 		true ->
 		    #jid{luser = LUser} = To,
 		    TimeStamp = now(),
-		    {xmlelement, _Name, _Attrs, Els} = Packet,
+		    #xmlel{children=Els} = Packet,
 		    Expire = find_x_expire(TimeStamp, Els),
 		    gen_mod:get_module_proc(To#jid.lserver, ?PROCNAME) !
 			#offline_msg{user = LUser,
@@ -222,7 +222,7 @@ store_packet(From, To, Packet) ->
 
 %% Check if the packet has any content about XEP-0022 or XEP-0085
 check_event_chatstates(From, To, Packet) ->
-    {xmlelement, Name, Attrs, Els} = Packet,
+    #xmlel{name=Name, attrs=Attrs, children=Els} = Packet,
     case find_x_event_chatstates(Els, {false, false, false}) of
 	%% There wasn't any x:event or chatstates subelements
 	{false, false, _} ->
@@ -236,25 +236,24 @@ check_event_chatstates(From, To, Packet) ->
 	    false;
 	%% There was an x:event element, and maybe also other stuff
 	{El, _, _} when El /= false ->
-	    case xml:get_subtag(El, "id") of
+	    case xml:get_subtag(El, <<"id">>) of
 		false ->
-		    case xml:get_subtag(El, "offline") of
+		    case xml:get_subtag(El, <<"offline">>) of
 			false ->
 			    true;
 			_ ->
 			    ID = case xml:get_tag_attr_s(<<"id">>, Packet) of
-				     "" ->
-					 {xmlelement, "id", [], []};
+				     <<>> ->
+				     #xmlel{name = <<"id">>};
 				     S ->
-					 {xmlelement, "id", [],
-					  [{xmlcdata, S}]}
+				     #xmlel{name = <<"id">>, children = #xmlcdata{content=S}}
 				 end,
 			    ejabberd_router:route(
-			      To, From, {xmlelement, Name, Attrs,
-					 [{xmlelement, "x",
-					   [{"xmlns", ?NS_EVENT}],
-					   [ID,
-					    {xmlelement, "offline", [], []}]}]
+			      To, From, #xmlel{name=Name, attrs=Attrs,
+			         children=[#xmlel{name = <<"x">>,
+					   attrs=[{<<"xmlns">>, ?NS_EVENT}],
+					   children=[ID,
+					    #xmlel{name= <<"offline">>}]}]
 					}),
 			    true
 		    end;
@@ -266,7 +265,7 @@ check_event_chatstates(From, To, Packet) ->
 %% Check if the packet has subelements about XEP-0022, XEP-0085 or other
 find_x_event_chatstates([], Res) ->
     Res;
-find_x_event_chatstates([{xmlcdata, _} | Els], Res) ->
+find_x_event_chatstates([#xmlcdata{} | Els], Res) ->
     find_x_event_chatstates(Els, Res);
 find_x_event_chatstates([El | Els], {A, B, C}) ->
     case xml:get_tag_attr_s(<<"xmlns">>, El) of
@@ -280,7 +279,7 @@ find_x_event_chatstates([El | Els], {A, B, C}) ->
 
 find_x_expire(_, []) ->
     never;
-find_x_expire(TimeStamp, [{xmlcdata, _} | Els]) ->
+find_x_expire(TimeStamp, [#xmlcdata{} | Els]) ->
     find_x_expire(TimeStamp, Els);
 find_x_expire(TimeStamp, [El | Els]) ->
     case xml:get_tag_attr_s(<<"xmlns">>, El) of
@@ -308,7 +307,7 @@ pop_offline_messages(Ls, User, Server) ->
     LServer = jlib:nameprep(Server),
     EUser = ejabberd_odbc:escape(LUser),
     case odbc_queries:get_and_del_spool_msg_t(LServer, EUser) of
-	{atomic, {selected, ["username","xml"], Rs}} ->
+	{atomic, {selected, [<<"username">>,<<"xml">>], Rs}} ->
 	    Ls ++ lists:flatmap(
 		    fun({_, XML}) ->
 			    case xml_stream:parse_element(XML) of
@@ -349,7 +348,7 @@ remove_user(User, Server) ->
 discard_warn_sender(Msgs) ->
     lists:foreach(
       fun(#offline_msg{from=From, to=To, packet=Packet}) ->
-	      ErrText = "Your contact offline message queue is full. The message has been discarded.",
+	      ErrText = <<"Your contact offline message queue is full. The message has been discarded.">>,
 	      Lang = xml:get_tag_attr_s(<<"xml:lang">>, Packet),
 	      Err = jlib:make_error_reply(
 		      Packet, ?ERRT_RESOURCE_CONSTRAINT(Lang, ErrText)),
@@ -361,7 +360,7 @@ discard_warn_sender(Msgs) ->
 
 webadmin_page(_, Host,
 	      #request{us = _US,
-		       path = ["user", U, "queue"],
+		       path = [<<"user">>, U, <<"queue">>],
 		       q = Query,
 		       lang = Lang} = _Request) ->
     Res = user_queue(U, Host, Query, Lang),
@@ -377,10 +376,10 @@ user_queue(User, Server, Query, Lang) ->
     Res = user_queue_parse_query(Username, LServer, Query),
     MsgsAll = case catch ejabberd_odbc:sql_query(
 			LServer,
-			["select username, xml from spool"
-			 "  where username='", Username, "'"
-			 "  order by seq;"]) of
-	       {selected, ["username", "xml"], Rs} ->
+			[<<"select username, xml from spool"
+			 "  where username='", Username/binary, "'"
+			 "  order by seq;">>]) of
+	       {selected, [<<"username">>, <<"xml">>], Rs} ->
 		   lists:flatmap(
 		     fun({_, XML}) ->
 			     case xml_stream:parse_element(XML) of
@@ -400,36 +399,36 @@ user_queue(User, Server, Query, Lang) ->
 		  ID = jlib:encode_base64(binary_to_list(term_to_binary(Msg))),
 		  Packet = Msg,
 		  FPacket = ejabberd_web_admin:pretty_print_xml(Packet),
-		  ?XE("tr",
-		      [?XAE("td", [{"class", "valign"}], [?INPUT("checkbox", "selected", ID)]),
-		       ?XAE("td", [{"class", "valign"}], [?XC("pre", FPacket)])]
+		  ?XE(<<"tr">>,
+		      [?XAE(<<"td">>, [{<<"class">>, <<"valign">>}], [?INPUT(<<"checkbox">>, <<"selected">>, ID)]),
+		       ?XAE(<<"td">>, [{<<"class">>, <<"valign">>}], [?XC(<<"pre">>, FPacket)])]
 		     )
 	  end, Msgs),
-    [?XC("h1", io_lib:format(?T("~s's Offline Messages Queue"),
+    [?XC(<<"h1">>, io_lib:format(?T("~s's Offline Messages Queue"),
 			     [us_to_list(US)]))] ++
 	case Res of
-	    ok -> [?XREST("Submitted")];
+	    ok -> [?XREST(<<"Submitted">>)];
 	    nothing -> []
 	end ++
-	[?XAE("form", [{"action", ""}, {"method", "post"}],
-	      [?XE("table",
-		   [?XE("thead",
-			[?XE("tr",
-			     [?X("td"),
-			      ?XCT("td", "Packet")
+	[?XAE(<<"form">>, [{<<"action">>, <<>>}, {<<"method">>, <<"post">>}],
+	      [?XE(<<"table">>,
+		   [?XE(<<"thead">>,
+			[?XE(<<"tr">>,
+			     [?X(<<"td">>),
+			      ?XCT(<<"td">>, <<"Packet">>)
 			     ])]),
-		    ?XE("tbody",
+		    ?XE(<<"tbody">>,
 			if
 			    FMsgs == [] ->
-				[?XE("tr",
-				     [?XAC("td", [{"colspan", "4"}], " ")]
+				[?XE(<<"tr">>,
+				     [?XAC(<<"td">>, [{<<"colspan">>, <<"4">>}], <<" ">>)]
 				    )];
 			    true ->
 				FMsgs
 			end
 		       )]),
 	       ?BR,
-	       ?INPUTT("submit", "delete", "Delete Selected")
+	       ?INPUTT(<<"submit">>, <<"delete">>, <<"Delete Selected">>)
 	      ])].
 
 user_queue_parse_query(Username, LServer, Query) ->
@@ -437,10 +436,10 @@ user_queue_parse_query(Username, LServer, Query) ->
 	{value, _} ->
 	    Msgs = case catch ejabberd_odbc:sql_query(
 				LServer,
-				["select xml, seq from spool"
-				 "  where username='", Username, "'"
-				 "  order by seq;"]) of
-		       {selected, ["xml", "seq"], Rs} ->
+				[<<"select xml, seq from spool"
+				 "  where username='", Username/binary, "'"
+				 "  order by seq;">>]) of
+		       {selected, [<<"xml">>, <<"seq">>], Rs} ->
 			   lists:flatmap(
 			     fun({XML, Seq}) ->
 				     case xml_stream:parse_element(XML) of
@@ -453,26 +452,21 @@ user_queue_parse_query(Username, LServer, Query) ->
 		       _ ->
 			   []
 		   end,
-	    F = fun() ->
-			lists:foreach(
-			  fun({Msg, Seq}) ->
-				  ID = jlib:encode_base64(
-					 binary_to_list(term_to_binary(Msg))),
-				  case lists:member({"selected", ID}, Query) of
-				      true ->
-					  SSeq = ejabberd_odbc:escape(Seq),
-					  catch ejabberd_odbc:sql_query(
-						  LServer,
-						  ["delete from spool"
-						   "  where username='", Username, "'"
-						   "  and seq='", SSeq, "';"]);
-				      false ->
-					  ok
-				  end
-			  end, Msgs)
-		end,
-	    mnesia:transaction(F),
-	    ok;
+		lists:foreach(fun({Msg, Seq}) ->
+	  		ID = jlib:encode_base64(
+		 		binary_to_list(term_to_binary(Msg))),
+	  		case lists:member({<<"selected">>, ID}, Query) of
+	      		true ->
+		  			SSeq = ejabberd_odbc:escape(Seq),
+		  			catch ejabberd_odbc:sql_query(
+			  			LServer,
+			  			[<<"delete from spool"
+			   			"  where username='", Username/binary, "'"
+			   			"  and seq='", SSeq, "';">>]);
+      			false ->
+		  			ok
+	  		end
+		end, Msgs);
 	false ->
 	    nothing
     end.
@@ -483,13 +477,13 @@ us_to_list({User, Server}) ->
 get_queue_length(Username, LServer) ->
     case catch ejabberd_odbc:sql_query(
 			    LServer,
-			    ["select count(*) from spool"
-			     "  where username='", Username, "';"]) of
-		   {selected, [_], [{SCount}]} ->
-		       SCount;
-		   _ ->
-		       0
-	       end.
+			    [<<"select count(*) from spool"
+			     "  where username='", Username/binary, "';">>]) of
+		{selected, [_], [{SCount}]} ->
+			SCount;
+		_ ->
+			0
+	end.
 
 get_messages_subset(User, Host, MsgsAll) ->
     Access = gen_mod:get_module_opt(Host, ?MODULE, access_max_user_messages,
@@ -515,8 +509,8 @@ webadmin_user(Acc, User, Server, Lang) ->
     LServer = jlib:nameprep(Server),
     Username = ejabberd_odbc:escape(LUser),
     QueueLen = get_queue_length(Username, LServer),
-    FQueueLen = [?AC("queue/", QueueLen)],
-    Acc ++ [?XCT("h3", "Offline Messages:")] ++ FQueueLen ++ [?C(" "), ?INPUTT("submit", "removealloffline", "Remove All Offline Messages")].
+    FQueueLen = [?AC(<<"queue/">>, QueueLen)],
+    Acc ++ [?XCT(<<"h3">>, <<"Offline Messages:">>)] ++ FQueueLen ++ [?C(<<" ">>), ?INPUTT(<<"submit">>, <<"removealloffline">>, <<"Remove All Offline Messages">>)].
 
 webadmin_user_parse_query(_, "removealloffline", User, Server, _Query) ->
     case catch odbc_queries:del_spool_msg(Server, User) of
